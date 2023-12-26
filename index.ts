@@ -175,7 +175,7 @@ class VsArenaManager {
         this.matchs_question[question.id]["player1_a"] = answer
         this.matchs_question[question.id]["player1_r"] = remaining_seconds
 
-        data.event = "opponent_locked"
+        data.event = "has_locked"
 
         this.conn[this.matchs[match.id].player2Id]?.send(JSON.stringify(data));
       }
@@ -183,7 +183,7 @@ class VsArenaManager {
         this.matchs_question[question.id]["player2_a"] = answer
         this.matchs_question[question.id]["player2_r"] = remaining_seconds
 
-        data.event = "opponent_locked"
+        data.event = "has_locked"
 
         this.conn[this.matchs[match.id].player1Id]?.send(JSON.stringify(data));
       }
