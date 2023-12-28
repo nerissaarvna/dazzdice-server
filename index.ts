@@ -9,22 +9,10 @@ import { EventEmitter } from 'events';
 import _ from 'lodash';
 import { evaluate } from 'mathjs';
 
-import { User, Match, Challenge, Question, ChallengeLeaderboard, MatchLeaderboard } from './models.js';
+import { User, Match, Challenge, Question, ChallengeLeaderboard, MatchLeaderboard, DataEvent } from './models.js';
 import * as q from './maths.js';
 
-class DataEvent {
-  event: string;
-  sender: string;
-  params: { [param: string]: any } = {};
-
-  constructor(event: string, sender: string, params: object = {}) {
-    this.event = event;
-    this.sender = sender;
-    this.params = params;
-  }
-}
-
-
+// Class yang mengatur pencarian lawan untuk permainan Vs Player
 class MatchMakingManager {
   wss = new WebSocketServer({ noServer: true, path: '/mm' });
   conn: { [id: string]: WebSocket } = {};
@@ -32,23 +20,28 @@ class MatchMakingManager {
   eventEmitter = new EventEmitter();
 
   constructor() {
+    // Client yang mengirim pesan "search_opponent" akan dimasukkan ke antrian pemain yang akan saling dihadapkan
     this.eventEmitter.on("search_opponent", async (data: DataEvent) => {
       this.queue.add(data.sender);
     });
 
+    // Setiap 3 detik, fungsi match_two_players akan dijalankan yang menghadapkan satu pemain dengan satu lainnya
     setInterval(match_two_players, 3000);
   }
 
+  // Memasukkan id pemain dan data koneksi pemain ke dalam object conn agar setiap koneksi dapat diidentifikasi dengan id pemain
   connect(ws: WebSocket, user: User) {
     this.conn[user.id] = ws;
   }
 
+  // Menghapus id pemain dan data koneksi pemain dari object conn, dan hapus dari antrian
   disconnect(id: string) {
     this.conn[id]?.close();
     this.queue.delete(id);
     delete this.conn[id];
   }
 
+  // Mengirim pesan ke seluruh koneksi/pemain yang terhubung dengan websocket
   broadcast(data: DataEvent, self: boolean = false) {
     Object.entries(this.conn).forEach((k, v) => {
       if (self) {
@@ -66,19 +59,24 @@ class MatchMakingManager {
 
 let mm = new MatchMakingManager();
 
+// Dari antrian pemain-pemain yang mencari lawan, dibagi menjadi setiap 2 pemain secara acak yang akan saling dihadapkan
 function match_two_players() {
+  // Cek jika antrian >1 pemain
   if (mm.queue.size > 1) {
+    // Ambil setiap 2 pemain secara acak, mungkin mengasilkan 1 pemain tidak memiliki lawan jika jumlah antrian adalah ganjil
     var matchs = _.chunk(_.shuffle(Array.from(mm.queue.values())), 2);
 
+    // Hilangkan pemain yang tidak memiliki lawan
     _.remove(matchs, (e) => {
       return e.length != 2;
     })
 
+    // Untuk setiap 2 pemain
     matchs.forEach(async (e) => {
+      // Buat object Match dan masukkan ke database
       var match = await Match.create({ id: uuidv4(), player1Id: e[0], player2Id: e[1] },);
 
-      //var [match, _] = await Match.findOrCreate({ where: { id: '1' }, defaults: { player1Id: e[0], player2Id: e[1], round: 5 } })
-
+      // Ambil data pemain yang bersangkutan
       var player1 = await match.$get('player1', { include: [MatchLeaderboard] });
       var player2 = await match.$get('player2', { include: [MatchLeaderboard] });
 
@@ -91,10 +89,14 @@ function match_two_players() {
 
       data.params = { "match": match }
 
+      // Masukkan object Match ke dalam objek matchs agar dapat diidentifikasi untuk setiap permainan yang sedang berlangsung
       vsarena.matchs[match.id] = match
 
+      // Untuk setiap pemain dalam Match
       e.forEach(async (n) => {
+        // Kirim pesan ke client bahwa lawan sudah ditemukan beserta objek Match
         mm.conn[n]?.send(JSON.stringify(data));
+        // Hapus koneksi dari antrian pencarian lawan
         mm.disconnect(n);
       });
     });
@@ -104,6 +106,7 @@ function match_two_players() {
   }
 }
 
+// Class yang mengatur permainan Vs Player yang sedang berlangsung
 class VsArenaManager {
   wss = new WebSocketServer({ noServer: true, path: '/arena' });
   conn: { [id: string]: WebSocket } = {};
@@ -113,6 +116,7 @@ class VsArenaManager {
   match_check_interval: { [id: string]: NodeJS.Timeout } = {};
 
   constructor() {
+    // Client mengirim pesan "ready" menandakan bahwa pemain sudah siap bermain dan menunggu client/pemain lainnya untuk juga mengirim pesan "ready"
     this.eventEmitter.on("ready", async (data: DataEvent) => {
       var match: Match = data.params!["match"];
 
@@ -125,6 +129,7 @@ class VsArenaManager {
         this.matchs[match.id].player2Status = 'ready'
       }
 
+      // Jika dua pemain sudah siap, data pertanyaan dibuat dan dikirim ke masing-masing pemain yang bersangkutan dalam permainan
       if (this.matchs[match.id].player1Status == "ready" && this.matchs[match.id].player2Status == "ready") {
         var oldQ: Question | null = data.params["question"];
 
@@ -161,6 +166,7 @@ class VsArenaManager {
       }
     });
 
+    // Client mengirim pesan "answer" beserta objek lainnya dan akan diproses sesuai dengan pertanyaan yang bersangkutan
     this.eventEmitter.on("answer", async (data: DataEvent) => {
       var match: Match = data.params!["match"];
       var question: Question = data.params!["question"];
@@ -171,6 +177,7 @@ class VsArenaManager {
       var score1 = 0;
       var score2 = 0
 
+      // Cek jika pemain sudah menjawab, dan mengirim pesan ke pemain lainnya bahwa salah satu pemain sudah menjawab
       if (data.sender == this.matchs[match.id].player1Id) {
         this.matchs_question[question.id]["player1_a"] = answer
         this.matchs_question[question.id]["player1_r"] = remaining_seconds
@@ -188,6 +195,7 @@ class VsArenaManager {
         this.conn[this.matchs[match.id].player1Id]?.send(JSON.stringify(data));
       }
 
+      // Cek jika 2 pemain sudah menjawab pertanyaan lalu proses skor jika pertanyaan benar dan dikalkulasi sesuai waktu tersisa ketika menjawab
       if (this.matchs_question[question.id]["player1_a"] != null && this.matchs_question[question.id]["player2_a"] != null) {
         if (question.answer == this.matchs_question[question.id]["player1_a"]!) {
           if (this.matchs_question[question.id]["player1_r"]! < max_score_bound) {
@@ -215,8 +223,10 @@ class VsArenaManager {
 
         this.matchs_question[question.id]["score2"] = score2
 
+        // Update pertanyaan bersangkutan dengan masing-masing skor pemain
         await Question.update({ score: score1, score2: score2 }, { where: { id: question.id } })
 
+        // Update Match bersangkutan
         await Match.update({
           score1: Sequelize.literal(`score1 + ${score1}`),
           score2: Sequelize.literal(`score2 + ${score2}`)
@@ -229,6 +239,7 @@ class VsArenaManager {
         data.params["match"] = this.matchs[match.id]
         data.params['result'] = this.matchs_question[question.id]
 
+        // Kirim hasil proses dari jawaban masing-masing pemain
         this.conn[this.matchs[match.id].player1Id]?.send(JSON.stringify(data));
         this.conn[this.matchs[match.id].player2Id]?.send(JSON.stringify(data));
 
@@ -236,11 +247,12 @@ class VsArenaManager {
       }
     });
 
-    // Menerima event "end" dimana client menghentikan permainan baik karena waktu habis atau keluar dari permainan dan mengirimkan hasil sesi permainan kembali ke client bersangkutan
+    // Client mengirim pesan "end" ketika hasil proses jawaban sudah diterima dan diproses di client, cek jika sudah pada ronde terakhir
     this.eventEmitter.on("end", async (data: DataEvent) => {
       var match: Match = data.params!["match"];
       var question: Question = data.params!["question"];
 
+      // Cek jika sudah pada ronde terakhir, untuk kali ini ronde dibuat secara default berjumlah 5 ronde (lihat Match.round)
       if (question.difficulty < match.round) {
         if (data.sender == this.matchs[match.id].player1Id) {
           this.matchs[match.id].player1Status = 'end'
@@ -250,14 +262,18 @@ class VsArenaManager {
         } else if (data.sender == this.matchs[match.id].player2Id) {
           this.matchs[match.id].player2Status = 'end'
         }
-        
+
+
+        // Lanjut ke ronde berikutnya jika belum ronde terakhir selesai
         if (this.matchs[match.id].player1Status == "end" && this.matchs[match.id].player2Status == "end") {
           data.event = 'next_round'
 
-this.conn[this.matchs[match.id].player1Id]?.send(JSON.stringify(data));
+          this.conn[this.matchs[match.id].player1Id]?.send(JSON.stringify(data));
           this.conn[this.matchs[match.id].player2Id]?.send(JSON.stringify(data));
         }
       } else {
+        // Permainan selesai pada ronde terakhir
+        // Update tabel-tabel yang bersangkutan
         var matchE = await Match.findByPk(match.id,
           {
             include: [{
@@ -296,6 +312,7 @@ this.conn[this.matchs[match.id].player1Id]?.send(JSON.stringify(data));
 
         data.event = "end"
         data.params = { "match": matchE }
+        // Broadcast kepada setiap client yang terhubung dengan lobby bahwa suatu permainan Vs Player sudah berakhir, dan update leaderboard terkait
         lobby.broadcast(new DataEvent("match_leader", "server"));
         this.conn[this.matchs[match.id].player1Id]?.send(JSON.stringify(data));
         this.conn[this.matchs[match.id].player2Id]?.send(JSON.stringify(data));
@@ -325,6 +342,7 @@ function Probability(rating1: number, rating2: number) {
   );
 }
 
+// Setiap pemain akan diberi rating awal senilai 1000, dan setiap rating pemaian akan diupdate berdasarkan hasil permainan dan perbedaan rating antar 2 pemain yang bermain (lihat Elo Rating)
 function DeltaRating(Ra: number, Rb: number, winner: number, K: number = 50,) {
   let Pb = Probability(Ra, Rb);
 
@@ -352,6 +370,7 @@ function DeltaRating(Ra: number, Rb: number, winner: number, K: number = 50,) {
 
 let vsarena = new VsArenaManager();
 
+// Class yang mengatur permainan Single Player
 class ChallengeArenaManager {
   wss = new WebSocketServer({ noServer: true, path: '/challenge' });
   conn: { [id: string]: WebSocket } = {};
@@ -469,7 +488,7 @@ class ChallengeArenaManager {
         data.params["new_rank"] = chal_rank[0].dataValues.rank
         data.params["new_score"] = chal_rank[0].score
 
-
+        // Broadcast kepada setiap client yang terhubung dengan lobby bahwa suatu permainan Single Player sudah berakhir, dan update leaderboard terkait
         lobby.broadcast(new DataEvent("chal_leader", "server"));
       }
 
@@ -498,7 +517,7 @@ class ChallengeArenaManager {
 let challengeArena = new ChallengeArenaManager();
 
 
-
+// Class yang mengatur koneksi pada halaman awal permainan(lobby)
 class LobbyManager {
   wss = new WebSocketServer({ noServer: true, path: '/lobby' });
   conn: { [id: string]: WebSocket } = {};
@@ -602,6 +621,7 @@ app.get('/', (req, res) => {
   res.send('<h1>Hello world</h1>');
 });
 
+// Cek jika suatu user dengan id tertentu sudah berada di database
 app.get('/user', async (req, res) => {
   var id = req.query.id as string;
 
@@ -614,6 +634,9 @@ app.get('/user', async (req, res) => {
   }
 });
 
+// Buat data user di database dengan nama tertentu, 
+// beserta decorator angka yang dibuat secara random, 
+// jika ada user dengan nama yang sama diharapkan dapat dibedakan dengan decorator
 app.get('/create', async (req, res) => {
   let name = req.query.name as string;
 
@@ -635,6 +658,7 @@ app.get('/create', async (req, res) => {
   }
 });
 
+// Dapatkan list pemain yang terhubung ke lobby
 app.get('/online', async (req, res) => {
   var offset = Number(req.query.offset as string);
   var limit = Number(req.query.limit as string);
@@ -644,7 +668,7 @@ app.get('/online', async (req, res) => {
     offset = 0
   }
   if (isNaN(limit)) {
-    limit = 10
+    limit = 100
   }
 
   var results: User[] = await User.findAll({
@@ -657,6 +681,7 @@ app.get('/online', async (req, res) => {
   res.json(results);
 });
 
+// Dapatkan leaderboard untuk permainan Vs Player
 app.get('/match_leader', async (req, res) => {
   var offset = Number(req.query.offset as string);
   var limit = Number(req.query.limit as string);
@@ -665,7 +690,7 @@ app.get('/match_leader', async (req, res) => {
     offset = 0
   }
   if (isNaN(limit)) {
-    limit = 10
+    limit = 100
   }
 
   var leaderboard = await MatchLeaderboard.findAll({
@@ -682,6 +707,7 @@ app.get('/match_leader', async (req, res) => {
   res.send(leaderboard);
 });
 
+// Dapatkan leaderboard untuk permainan Single Player
 app.get('/chal_leader', async (req, res) => {
   var offset = Number(req.query.offset as string);
   var limit = Number(req.query.limit as string);
@@ -690,7 +716,7 @@ app.get('/chal_leader', async (req, res) => {
     offset = 0
   }
   if (isNaN(limit)) {
-    limit = 10;
+    limit = 100;
   }
 
   var leaderboard = await ChallengeLeaderboard.findAll({
@@ -706,126 +732,13 @@ app.get('/chal_leader', async (req, res) => {
   res.send(leaderboard);
 });
 
-app.get('/user_chal', async (req, res) => {
-  var id = req.query.id;
-  var offset = Number(req.query.offset as string);
-  var limit = Number(req.query.limit as string);
-
-  if (isNaN(offset)) {
-    offset = 0
-  }
-  if (isNaN(limit)) {
-    limit = 10
-  }
-
-  // var challenges = await Challenge.findAll({
-  //     offset: offset,
-  //     limit: limit,
-  //     attributes: {
-  //         include: [
-  //             [Sequelize.fn('MAX', Sequelize.col('score')), 'score'],
-  //             [Sequelize.literal('ROW_NUMBER() OVER (ORDER BY "score" DESC)'), 'rank']
-  //         ],
-  //     },
-  //     group: ["playerId"],
-  //     where: {
-  //         round: { [Op.not]: 0 },
-  //         playerId: id
-  //     },
-  //     include: [{ model: User, attributes: ['id', 'name', 'decorator'] }],
-  // });
-
-  var chal = await Challenge.findByPk('7eab443c-ca21-487c-8c0e-aa880c65474c');
-
-  //187ba9ee-0459-429a-8909-6e3e2b6d61e7
-  //9efe1b4e-429e-439d-9a5a-1141ca6972e7
-
-  var challenges = await Challenge.findAll({
-    offset: offset,
-    limit: limit,
-    attributes: {
-      include: [
-        [Sequelize.fn('MAX', Sequelize.col('score')), 'score'],
-        [Sequelize.literal('ROW_NUMBER() OVER (ORDER BY "score" DESC)'), 'rank']
-      ],
-    },
-    group: ["playerId"],
-    where: {
-      round: { [Op.not]: 0 },
-    },
-    include: [{ model: User, attributes: ['id', 'name', 'decorator'] }],
-  });
-
-  challenges = _.filter(challenges, (e) => {
-    return e.playerId == '';
-  });
-
-  console.log(challenges[0])
-
-  res.send('');
-});
-
-app.get('/highest_chal', async (req, res) => {
-  var id = req.query.id
-  var offset = Number(req.query.offset as string);
-  var limit = Number(req.query.limit as string);
-
-  if (isNaN(offset)) {
-    offset = 0
-  }
-  if (isNaN(limit)) {
-    limit = 10
-  }
-
-  var challenges = await Challenge.findAll({
-    where: { playerId: id },
-    offset: offset,
-    limit: limit,
-    attributes: {
-      include: [
-        [Sequelize.literal('RANK() OVER (ORDER BY "score" DESC)'), 'rank']
-      ]
-    },
-  });
-
-  var max_chal = _.maxBy(challenges, 'score');
-
-
-  res.send(max_chal?.toJSON());
-});
-
-
-app.get('/vscom', async (req, res) => {
-  var id = req.query.id;
-
-  var match = await Match.create({ id: uuidv4(), player1Id: id, player2Id: "0" });
-
-  res.send(match.toJSON());
-});
-
+// Buat dan simpan objek Challenge ke database
 app.get('/create_challenge', async (req, res) => {
   var id = req.query.id;
 
   var challenge = await Challenge.create({ id: uuidv4(), playerId: id });
 
   res.send(challenge.toJSON());
-});
-
-
-
-app.get('/test', async (req, res) => {
-
-  var a = await Match.create({ id: uuidv4(), player1Id: "08851ff9-4906-4094-bc6a-bca7e6434a8d", player2Id: "b1e1ad59-a6e2-418a-bfff-829ca38623a2", }, { include: [{ model: User, as: "player1" }] });
-
-  var p1 = (await a.$get("player1", { include: [MatchLeaderboard] }))?.toJSON()
-
-  a = a.toJSON()
-
-  a.player1 = p1
-
-  console.log(a)
-
-  res.send(a)
 });
 
 
@@ -925,6 +838,7 @@ server.on('upgrade', async function upgrade(req, socket, head) {
 
 });
 
+// Koneksi websocket lobby
 lobby.wss.on('connection', function connection(ws, req, ...args: User[]) {
   (ws as any).isAlive = true;
 
@@ -955,6 +869,7 @@ lobby.wss.on('connection', function connection(ws, req, ...args: User[]) {
   lobby.connect(ws, user);
 });
 
+// Koneksi websocket antrian permainan Vs Player
 mm.wss.on('connection', function connection(ws, req, ...args: User[]) {
   var user = args[0];
 
@@ -974,7 +889,7 @@ mm.wss.on('connection', function connection(ws, req, ...args: User[]) {
   mm.connect(ws, user);
 });
 
-
+// Koneksi websocket permainan Vs Player
 vsarena.wss.on('connection', function connection(ws, req, ...args: User[] | Match[]) {
   var user = args[0] as User;
   var match = args[1] as Match;
@@ -998,10 +913,12 @@ vsarena.wss.on('connection', function connection(ws, req, ...args: User[] | Matc
   vsarena.connect(ws, user);
 });
 
+// Koneksi websocket permainan Single Player
 challengeArena.wss.on('connection', async function connection(ws, req, ...args: User[] | Challenge[]) {
   var user = args[0] as User;
   var challenge = args[1] as Challenge;
 
+  // Dapatkan skor dan ranking pemain saat ini dari leaderboard Single Player
   var leaderboard = await ChallengeLeaderboard.findAll({
     attributes: {
       include: [

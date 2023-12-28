@@ -1,5 +1,18 @@
-import { Table, Model, Column, DataType, ForeignKey, BelongsTo, HasMany, HasOne } from "sequelize-typescript";
+import { Table, Model, Column, ForeignKey, BelongsTo, HasMany, HasOne } from "sequelize-typescript";
 
+export class DataEvent {
+  event: string;
+  sender: string;
+  params: { [param: string]: any } = {};
+
+  constructor(event: string, sender: string, params: object = {}) {
+    this.event = event;
+    this.sender = sender;
+    this.params = params;
+  }
+}
+
+// Database menggunakan SQLite dengan menggunakan ORM Sequilize untuk manipulasi data
 
 @Table({
   defaultScope: {
