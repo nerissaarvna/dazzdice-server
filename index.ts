@@ -138,7 +138,7 @@ class VsArenaManager {
         if (difficulty == null) {
           difficulty = 1
         } else {
-          difficulty++;
+          difficulty =  difficulty + 2 ;
         }
 
         var question = q.getQuestDice(difficulty)
@@ -381,12 +381,13 @@ class ChallengeArenaManager {
     // Menerima event "get_q" untuk menghasilkan pertanyaan berdasarkan level kesulitan dan mengirimkannya kembali ke client bersangkutan
     this.eventEmitter.on("get_q", async (data: DataEvent) => {
       var challenge: Challenge = data.params!["challenge"];
-      var difficulty: number = data.params!["difficulty"];
+      var oldQ: Question | null = data.params["question"];
+      var difficulty = oldQ?.difficulty;
 
       if (difficulty == null) {
         difficulty = 1
       } else {
-        difficulty++;
+        difficulty = difficulty + 2;
       }
 
       var question = q.getQuestDice(difficulty)

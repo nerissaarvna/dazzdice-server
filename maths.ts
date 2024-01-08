@@ -1,8 +1,8 @@
 import _ from 'lodash';
 import { Question } from './models.js';
 
-var op15 = ['+', '-', '*', '/', '^', 'nthRoot'];
-var op13 = ['+', '-', '*', '/', '^'];
+var op15 = ['+', '-', '*', '/', 'nthRoot'];
+var op13 = ['+', '-', '*', '/'];
 var op6 = ['+', '-', '*', '/'];
 var op1 = ['+', '-',];
 
