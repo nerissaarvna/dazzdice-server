@@ -138,7 +138,7 @@ class VsArenaManager {
         if (difficulty == null) {
           difficulty = 1
         } else {
-          difficulty =  difficulty + 2 ;
+          difficulty =  difficulty + 1 ;
         }
 
         var question = q.getQuestDice(difficulty)
@@ -387,7 +387,7 @@ class ChallengeArenaManager {
       if (difficulty == null) {
         difficulty = 1
       } else {
-        difficulty = difficulty + 2;
+        difficulty = difficulty + 1;
       }
 
       var question = q.getQuestDice(difficulty)

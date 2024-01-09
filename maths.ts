@@ -38,11 +38,11 @@ export function roundedRandomNumberG(min: number = 0, max: number = 100, mu: num
 
 // Mengasilkan operator berdasarkan variable dif
 export function getOp(dif: number): string {
-    if (dif < 6) {
+    if (dif < 3) {
         return _.sample(op1)!
-    } else if (dif >= 6 && dif < 13) {
+    } else if (dif >= 3 && dif < 6) {
         return _.sample(op6)!
-    } else if (dif >= 13) {
+    } else if (dif >= 6) {
         return _.sample(op13)!
     } else {
         return '+'
